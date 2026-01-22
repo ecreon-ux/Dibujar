@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dibuja y Adivina (Multiplayer)</title>
+  <style>
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:#0b0f17;color:#e5e7eb}
+    .wrap{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;padding:12px;max-width:1200px;margin:0 auto}
+    .card{background:#121a26;border:1px solid rgba(255,255,255,.06);border-radius:14px}
+    .top{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px 14px;flex-wrap:wrap}
+    .pill{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);color:#94a3b8;font-size:12px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#e5e7eb;padding:10px 12px;border-radius:12px;width:100%}
+    button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:#e5e7eb;padding:10px 12px;border-radius:12px;cursor:pointer}
+    button.primary{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.35)}
+    button.danger{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.25)}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .join{display:grid;gap:10px;padding:14px}
+    .canvasBox{padding:12px}
+    canvas{width:100%;height:62vh;display:block;background:#0f172a;border-radius:14px;border:1px solid rgba(255,255,255,.06);touch-action:none}
+    .side{display:grid;grid-template-rows:auto auto 1fr auto;gap:12px}
+    .players{padding:10px 12px}
+    .plist{display:grid;gap:6px}
+    .p{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+    .chat{padding:10px 12px;display:grid;grid-template-rows:auto 1fr;gap:8px}
+    .log{height:40vh;overflow:auto;padding:8px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+    .msg{margin:0 0 8px;line-height:1.25}
+    .muted{color:#94a3b8;font-size:12px}
+    .word{font-weight:700;letter-spacing:.12em}
+    .badge{padding:4px 8px;border-radius:10px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.25);font-size:12px}
+    .chatbar{display:flex;gap:8px;padding:10px 12px}
+    @media (max-width:900px){.wrap{grid-template-columns:1fr}canvas{height:50vh}.log{height:30vh}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="top">
+        <div class="row">
+          <div class="pill">Sala: <span id="roomName">-</span></div>
+          <div class="pill">Estado: <span id="state">lobby</span></div>
+          <div class="pill">Tiempo: <span id="timer">--</span>s</div>
+        </div>
+        <div class="row">
+          <div class="pill">Palabra: <span id="wordMasked" class="word">-</span></div>
+          <span id="youAreDrawer" class="badge" style="display:none;">Eres el dibujante</span>
+        </div>
+      </div>
+
+      <div id="joinPanel" class="join">
+        <div class="row" style="gap:8px;">
+          <input id="name" placeholder="Tu nombre (ej: Ale)" maxlength="18" />
+          <input id="room" placeholder="Sala (ej: amigos)" maxlength="24" />
+        </div>
+        <div class="row">
+          <button class="primary" id="btnJoin">Entrar</button>
+          <button id="btnCopyLink">Copiar link de sala</button>
+        </div>
+        <div class="muted">Comparte el link para que entren a tu misma sala.</div>
+      </div>
+
+      <div class="canvasBox">
+        <canvas id="c"></canvas>
+        <div class="muted" style="padding-top:10px">Si eres dibujante, dibuja. Los demás escriben en el chat.</div>
+      </div>
+
+      <div class="top">
+        <div class="row">
+          <button id="btnClear" class="danger">Limpiar</button>
+          <button id="btnStart" class="primary">Iniciar</button>
+        </div>
+        <div class="muted" id="secretWord"></div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card players">
+        <div class="pill">Jugadores</div>
+        <div id="plist" class="plist" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card chat">
+        <div class="row" style="justify-content:space-between;">
+          <div class="pill">Chat</div>
+          <div class="muted">No reveles la palabra 😉</div>
+        </div>
+        <div id="log" class="log"></div>
+      </div>
+
+      <div class="card chatbar">
+        <input id="chat" placeholder="Escribe tu intento..." maxlength="120" />
+        <button id="send">Enviar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const $ = (id) => document.getElementById(id);
+
+    const joinPanel = $("joinPanel");
+    const btnJoin = $("btnJoin");
+    const btnCopyLink = $("btnCopyLink");
+    const btnStart = $("btnStart");
+    const btnClear = $("btnClear");
+
+    const roomInput = $("room");
+    const nameInput = $("name");
+    const roomName = $("roomName");
+    const stateEl = $("state");
+    const timerEl = $("timer");
+    const wordMasked = $("wordMasked");
+    const youAreDrawer = $("youAreDrawer");
+    const secretWord = $("secretWord");
+    const plist = $("plist");
+    const log = $("log");
+    const chat = $("chat");
+    const send = $("send");
+
+    const canvas = $("c");
+    const ctx = canvas.getContext("2d");
+    let drawing = false;
+    let isDrawer = false;
+    let last = null;
+
+    function fitCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#ffffff";
+    }
+    window.addEventListener("resize", fitCanvas);
+    setTimeout(fitCanvas, 50);
+
+    function logMsg(text) {
+      const p = document.createElement("p");
+      p.className = "msg";
+      p.innerHTML = text;
+      log.appendChild(p);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function getRoomFromUrl() {
+      const u = new URL(location.href);
+      return u.searchParams.get("room") || "";
+    }
+    roomInput.value = getRoomFromUrl();
+
+    btnCopyLink.onclick = async () => {
+      const room = (roomInput.value || "").trim() || "public";
+      const u = new URL(location.href);
+      u.searchParams.set("room", room);
+      try { await navigator.clipboard.writeText(u.toString()); logMsg("🔗 Link copiado."); }
+      catch { logMsg("⚠️ Copia el link manualmente."); }
+    };
+
+    btnJoin.onclick = () => {
+      const name = (nameInput.value || "").trim() || "Jugador";
+      const roomId = (roomInput.value || "").trim() || "public";
+
+      socket.emit("room:join", { roomId, name });
+      joinPanel.style.display = "none";
+      roomName.textContent = roomId;
+
+      const u = new URL(location.href);
+      u.searchParams.set("room", roomId);
+      history.replaceState({}, "", u);
+    };
+
+    btnStart.onclick = () => socket.emit("room:start");
+
+    btnClear.onclick = () => {
+      if (!isDrawer) return logMsg("Solo el dibujante puede limpiar.");
+      socket.emit("canvas:clear");
+    };
+
+    send.onclick = sendChat;
+    chat.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+    function sendChat() {
+      const text = (chat.value || "").trim();
+      if (!text) return;
+      socket.emit("chat:send", { text });
+      chat.value = "";
+    }
+
+    function getPos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      const t = evt.touches?.[0] || evt;
+      return { x: (t.clientX - rect.left), y: (t.clientY - rect.top) };
+    }
+    function drawLine(a, b) {
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+
+    function startDraw(evt) {
+      if (!isDrawer) return;
+      drawing = true;
+      last = getPos(evt);
+      evt.preventDefault();
+    }
+    function moveDraw(evt) {
+      if (!drawing || !isDrawer) return;
+      const p = getPos(evt);
+      drawLine(last, p);
+      socket.emit("draw:stroke", { a: last, b: p });
+      last = p;
+      evt.preventDefault();
+    }
+    function endDraw(evt) { drawing = false; last = null; evt.preventDefault(); }
+
+    canvas.addEventListener("mousedown", startDraw);
+    canvas.addEventListener("mousemove", moveDraw);
+    window.addEventListener("mouseup", endDraw);
+    canvas.addEventListener("touchstart", startDraw, { passive:false });
+    canvas.addEventListener("touchmove", moveDraw, { passive:false });
+    canvas.addEventListener("touchend", endDraw, { passive:false });
+
+    socket.on("system:message", ({ text }) => logMsg(text));
+    socket.on("chat:message", ({ from, text }) => logMsg(`<b>${esc(from)}:</b> ${esc(text)}`));
+
+    socket.on("room:update", (snap) => {
+      stateEl.textContent = snap.state;
+      plist.innerHTML = "";
+      snap.players.sort((a,b)=>b.score-a.score).forEach(p => {
+        const div = document.createElement("div");
+        div.className = "p";
+        div.innerHTML = `<div>${esc(p.name)} ${p.id===snap.hostId?"👑":""} ${p.id===snap.drawerId?"🖍️":""}</div><div><b>${p.score}</b></div>`;
+        plist.appendChild(div);
+      });
+
+      isDrawer = (snap.drawerId === socket.id);
+      youAreDrawer.style.display = isDrawer ? "inline-flex" : "none";
+      btnClear.disabled = !isDrawer;
+      btnStart.disabled = (socket.id !== snap.hostId);
+
+      wordMasked.textContent = snap.maskedWord ? snap.maskedWord : "-";
+      if (!isDrawer) secretWord.textContent = "";
+    });
+
+    socket.on("timer", ({ remaining }) => { timerEl.textContent = remaining; });
+    socket.on("word:masked", ({ masked }) => { wordMasked.textContent = masked; if(!isDrawer) secretWord.textContent=""; });
+    socket.on("word:secret", ({ word }) => { secretWord.innerHTML = `Tu palabra: <span class="word">${esc(word)}</span>`; });
+
+    socket.on("draw:stroke", ({ a, b }) => drawLine(a, b));
+    socket.on("canvas:clear", () => ctx.clearRect(0,0,canvas.width,canvas.height));
+
+    function esc(s){ return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c])); }
+  </script>
+</body>
+</html>
